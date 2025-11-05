@@ -59,9 +59,13 @@ class PSO:
         min_explored = np.min(original_particles, axis=0).copy()
         max_explored = np.max(original_particles, axis=0).copy()
         
-        # Parallel evaluation of initial scores using normalized cost function
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            personal_best_scores = np.array(list(executor.map(self.normalized_cost_function, particles)))
+        # Evaluate initial scores (sequential if max_workers <= 1 to avoid multiprocessing issues)
+        if self.max_workers is not None and self.max_workers <= 1:
+            personal_best_scores = np.array([self.normalized_cost_function(p) for p in particles])
+        else:
+            # Parallel evaluation of initial scores using normalized cost function
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                personal_best_scores = np.array(list(executor.map(self.normalized_cost_function, particles)))
         
         global_best = personal_best[np.argmin(personal_best_scores)].copy()
         global_best_score = np.min(personal_best_scores)
@@ -86,9 +90,13 @@ class PSO:
             min_explored = np.minimum(min_explored, np.min(original_particles, axis=0))
             max_explored = np.maximum(max_explored, np.max(original_particles, axis=0))
             
-            # Parallel evaluation of scores for all particles using normalized cost function
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                scores = np.array(list(executor.map(self.normalized_cost_function, particles)))
+            # Evaluate scores (sequential if max_workers <= 1)
+            if self.max_workers is not None and self.max_workers <= 1:
+                scores = np.array([self.normalized_cost_function(p) for p in particles])
+            else:
+                # Parallel evaluation of scores for all particles using normalized cost function
+                with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                    scores = np.array(list(executor.map(self.normalized_cost_function, particles)))
             
             # Update personal bests
             for j in range(self.num_particles):

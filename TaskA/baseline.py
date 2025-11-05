@@ -12,7 +12,7 @@ Arguments:
     target_folder: Path to folder containing target IR files (generate it using ModalPlate/DatasetGen.py)
     
 Output:
-    Creates experiment_results/ folder containing:
+    Creates experiment_results_taskA/ folder containing:
     - best parameters CSV for each target
     - synthesized audio using best parameters
     - experiment logs
@@ -28,6 +28,7 @@ from pathlib import Path
 from datetime import datetime
 import librosa
 import soundfile as sf
+import platform
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -66,7 +67,7 @@ DURATION = 3.0   # Duration for synthesis (will be adjusted based on target)
 MAX_WORKERS = None  # Auto-detect
 
 # Output directory
-OUTPUT_DIR = "experiment_results"
+OUTPUT_DIR = "experiment_results_taskA"
 
 # ===========================
 # UTILITY FUNCTIONS
@@ -177,7 +178,11 @@ def run_baseline_experiment(target_folder="random-IR-10-1.0s"):
     print("=" * 60)
     
     # Setup
-    if MAX_WORKERS is None:
+    if platform.system() == "Darwin":
+        # macOS uses 'spawn' for multiprocessing; avoid processes to ensure shared state
+        max_workers = 1
+        print("macOS detected; using a single worker (no multiprocessing) to avoid spawn issues.")
+    elif MAX_WORKERS is None:
         cpu_count = multiprocessing.cpu_count()
         max_workers = min(cpu_count, 16)
         print(f"Auto-detected {max_workers} workers from {cpu_count} CPU cores")

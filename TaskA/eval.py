@@ -11,7 +11,7 @@ Usage:
     python eval.py [experiment_results_folder] [target_folder]
     
 Arguments:
-    experiment_results_folder: Path to folder containing experiment results (default: experiment_results)
+    experiment_results_folder: Path to folder containing experiment results (default: experiment_results_taskA)
     target_folder: Path to folder containing target (ground truth) parameter CSV files (default: random-IR-10-1.0s)
     
 Output:
@@ -210,7 +210,7 @@ def find_matching_files(experiment_folder, target_folder):
 # MAIN EVALUATION FUNCTION
 # ===========================
 
-def run_evaluation(experiment_folder="experiment_results", target_folder="random-IR-10-1.0s"):
+def run_evaluation(experiment_folder="experiment_results_taskA", target_folder="random-IR-10-1.0s"):
     """
     Run evaluation of experiment results against ground truth.
     
@@ -483,15 +483,15 @@ def main():
         epilog="""
 Examples:
     python eval.py                                          # Use default folders
-    python eval.py experiment_results random-IR-10-1.0s  # Specify folders
+    python eval.py experiment_results_taskA random-IR-10-1.0s  # Specify folders
         """
     )
     
     parser.add_argument(
         'experiment_folder',
         nargs='?',
-        default='experiment_results',
-        help='Path to experiment results folder (default: experiment_results)'
+        default='experiment_results_taskA',
+        help='Path to experiment results folder (default: experiment_results_taskA)'
     )
     
     parser.add_argument(

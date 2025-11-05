@@ -92,11 +92,10 @@ def synthesize_plate_and_data(param_dict, duration=5.0, sample_rate=44100):
     
     # Extract modal vectors
     modal_vectors = {
-        'P': plate.Pvec.copy(),
+        'f0': plate.f0_vec.copy(),
         'sigma': plate.sigma_vec.copy(),
-        'f0': plate.f0_vec.copy()
+        'gain': plate.Pvec.copy()
     }
-    
     return audio, modal_vectors
 
 
@@ -110,9 +109,9 @@ def save_modal_vectors_csv(modal_vectors, filepath):
     """
     # Create DataFrame with the modal vectors
     df = pd.DataFrame({
-        'P': modal_vectors['P'],
+        'f0': modal_vectors['f0'],
         'sigma': modal_vectors['sigma'],
-        'f0': modal_vectors['f0']
+        'gain': modal_vectors['gain']
     })
     df.to_csv(filepath, index=False)
 

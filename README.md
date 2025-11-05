@@ -47,7 +47,7 @@ python TaskA/baseline.py
 or
 
 ```bash
-python TaskB/baseline.py
+python TaskB/baseline.py --folder random-IR-1.0s --fmin 50 --fmax 500
 ```
 
 To evaluate the estimated results:

@@ -3,8 +3,8 @@
 ````markdown
 # TaskB
 
-**TaskB** identifies plate modal parameters from CSV-defined plate data using the same modal identification method as `baselineModalParameters.py`.  
-It reads plate and material parameters from CSV files and computes all modes whose natural frequencies fall within a user-specified frequency band.
+**TaskB** identifies plate modal parameters from CSV-defined plate data generated via the ModalPlate class.  
+It reads plate and material parameters from CSV files and attempts to identify all modes whose natural frequencies fall within a user-specified frequency band.
 
 ---
 
@@ -13,7 +13,7 @@ It reads plate and material parameters from CSV files and computes all modes who
 Run the script from your project root (the folder that contains both `TaskB/` and your data folder):
 
 ```bash
-python TaskB/baselineTaskB.py --folder <folder_name> --fmin <Hz> --fmax <Hz> [--root <path_to_project_root>]
+python TaskB/baseline.py --folder <folder_name> --fmin <Hz> --fmax <Hz> [--root <path_to_project_root>]
 ````
 
 ### Command-line options
@@ -30,13 +30,13 @@ python TaskB/baselineTaskB.py --folder <folder_name> --fmin <Hz> --fmax <Hz> [--
 ## Example
 
 ```bash
-python TaskB/baselineTaskB.py --folder random-IR-10-10.0s --fmin 20 --fmax 50
+python TaskB/baseline.py --folder random-IR-10-10.0s --fmin 20 --fmax 10000
 ```
 
 This will:
 
 1. Read all `random_IR_params_*.csv` files in `./random-IR-10-10.0s/`.
-2. Identify all plate modes whose natural frequencies fall between 20 Hz and 50 Hz.
+2. Identify all plate modes whose natural frequencies fall between 20 Hz and 10000 Hz.
 3. Save the results to:
 
    ```

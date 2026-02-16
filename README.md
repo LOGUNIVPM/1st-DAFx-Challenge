@@ -99,25 +99,40 @@ The dataset will be provided at a later time, see the deadlines.
 
 ## 🧩 Task A — Physical Parameter Estimation
 
-For this task, participants must estimate the **physical parameters** of the metal plate from the given IRs.
+For this task, participants must estimate a subset of the physical parameters of the metal plate from the given impulse responses (IRs).
 
-| Parameter | Range | Description |
-|------------|--------|-------------|
-| `Ly` | [1.1, 4.0] | Plate height |
-| `h` | [0.001, 0.005] | Plate thickness |
-| `T0` | [0.01, 1000.0] | Tension |
-| `rho` | [2430.0, 21230.0] | Density |
-| `E` | [6.7e10, 22.0e10] | Young’s modulus |
-| `T60_DC` | [6.0, 10.0] | Decay time at DC |
-| `T60_F1` | [1.0, 5.0] | Decay time at frequency F1 |
-| `op_x` | [0.51, 1.0] | Output transducer position x |
-| `op_y` | [0.51, 1.0] | Output transducer position y |
+Specifically, the following parameter set must be inferred:
 
-**Fixed parameters (not to be estimated):**
-- Lx: plate width (1m)
-- Poisson’s ratio, \( \nu \ )
-- `loss_F1`: frequency at which `T60_F1` is defined
-- fp_x, fp_y = (0.335, 0.467), the plate input transducer position relative to Lx
+S(P) = { μ := ρ/h, D/μ, T₀/μ, Ly, xo, yo }
+
+These six parameters uniquely define the plate’s impulse response and modal distribution.
+
+### Parameter ranges
+
+| Parameter | Symbol | Range | Description |
+|----------|--------|--------|-------------|
+| Density–thickness ratio | μ = ρ/h | derived | Density divided by thickness |
+| Rigidity ratio | D/μ | derived | Flexural rigidity normalized by μ |
+| Tension ratio | T₀/μ | derived | Tension normalized by μ |
+| Plate height | Ly | [1.1, 4.0] m | Plate vertical dimension |
+| Output position (x) | xo | [0.49 · Lx, Lx] | Output transducer x-position |
+| Output position (y) | yo | [0.51 · Ly, Ly] | Output transducer y-position |
+
+### Fixed parameters (not to be estimated)
+
+The following parameters are fixed for all simulations:
+
+- Lx = 1.0 m (plate width)
+- ν = 0.25 (Poisson’s ratio)
+- τ₀ = 6 s (decay time at DC)
+- τ₁ = 2 s (decay time at 500 Hz)
+- f₁ = 500 Hz (reference loss frequency)
+- xi = 0.335 · Lx (input position x)
+- yi = 0.467 · Ly (input position y)
+
+### Important note
+
+The parameters ρ, h, E, and T₀ are not estimated directly. Instead, they are combined into the derived parameters μ, D/μ, and T₀/μ, resulting in a total of six estimated parameters.
 
 ---
 

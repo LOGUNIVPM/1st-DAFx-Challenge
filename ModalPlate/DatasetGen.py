@@ -88,7 +88,7 @@ def synthesize_plate_and_data(param_dict, duration=5.0, sample_rate=44100):
     plate = ModalPlate(sample_rate=sample_rate, plate_params=param_dict)
     
     # Synthesize audio
-    audio = plate.synthesize_ir_method(duration=duration, velCalc=True, normalize=True)
+    audio = plate.synthesize_ir_method(duration=duration, velCalc=False, normalize=False)
     
     # Extract modal vectors
     modal_vectors = {

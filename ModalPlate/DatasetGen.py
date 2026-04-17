@@ -6,8 +6,8 @@ Random Plate Dataset Generator
 Generates a dataset of random plate impulse responses using uniform distribution
 within the parameter ranges defined in ParamRange.py.
 
-Usage:
-    python generate_random_dataset.py [--number NUM] [--duration DURATION]
+Usage: from the root folder of DAFx-Challenge, run:
+    python -m ModalPlate.DatasetGen [--number NUM] [--duration DURATION]
     
 Arguments:
     --number:   Number of impulse responses to generate (default: 10)
@@ -180,7 +180,7 @@ def generate_dataset(num_ir=10, duration=5.0, sample_rate=44100):
             modes_path = output_dir / modes_filename
             
             # Save audio file
-            sf.write(str(audio_path), audio, sample_rate)
+            sf.write(str(audio_path), audio, sample_rate, subtype='FLOAT')
             
             # Save parameters CSV
             save_parameters_csv(params, params_path)

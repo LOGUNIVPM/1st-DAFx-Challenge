@@ -80,7 +80,7 @@ params = {
     'h': ParamRange(0.001, 0.005),
     'T0': ParamRange(0.01, 1000.0),
     'rho': ParamRange(2430.0, 21230.0),
-    'E': ParamRange(6.7e10, 22.0e10),
+    'E': ParamRange(6.7e10, 2.2e11),
     'nu': ParamRange(0.25, 0.25), # Fixed
     'T60_DC': ParamRange(6.0, 6.0), # Fixed
     'T60_F1': ParamRange(2.0, 2.0), # Fixed

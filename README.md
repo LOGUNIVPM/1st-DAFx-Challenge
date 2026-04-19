@@ -1,7 +1,7 @@
 # 1st DAFx Parameter Estimation Challenge
 
-**Official repository for the 1st DAFx Parameter Estimation Challenge**  
-Hosted at the next [DAFx](https://dafx.de/) conference: [DAFx26]()http://dafx26.mit.edu/)
+**Official repository for the 1st DAFx Parameter Estimation Challenge**
+Hosted at [DAFx26](http://dafx26.mit.edu/), Boston, 1–4 September 2026.
 
 ---
 
@@ -29,42 +29,60 @@ First install Python 3 and required libraries using
 pip install -r requirements.txt
 ```
 
-To test the IR generation just run ModalPlate.py (the main function contains a minimum working example with default parameters.)
-
-To generate a dataset of IRs run ModalPlate as a module like this:
+To test the IR generation, run:
 
 ```bash
-python3 -m ModalPlate.DatasetGen
+python3 -m ModalPlate.ModalPlate
 ```
 
-Each IR (wav file) is accompanied by a csv containing the plate parameters and the modal parameters. The sampling frequency will be 44100 throughout the entire challenge.
+(the `__main__` of that module contains a minimum working example with default
+parameters).
 
-If you want to see how the baseline models perform over the generated dataset you can run these scripts
+To generate a dataset of IRs:
 
 ```bash
-python TaskA/baseline.py
+python3 -m ModalPlate.DatasetGen --number 10 --duration 1.0
 ```
-or
+
+For each IR, `DatasetGen` writes four files (sampling rate 44 100 Hz throughout).
+
+| File | Purpose |
+| --- | --- |
+| `random_IR_XXXX.npz` | **Scientific IR** — unnormalized displacement plus metadata. **This is the official input for the challenge tasks.** |
+| `random_IR_XXXX.wav` | Peak-normalized, float32 — for **human listening only**. |
+| `random_IR_params_XXXX.csv` | Raw plate parameters used (ground truth for Task A). |
+| `random_IR_modes_XXXX.csv` | Per-mode `(f0, sigma, gain)` ground truth (for Task B). |
+
+**Important:** the peak-normalized WAV discards the absolute amplitude of the
+IR, which carries physical information (μ for Task A, $b_m$ for Task B).
+Do **not** use the WAV for the challenge tasks — read the NPZ instead:
+
+### Running the baselines
 
 ```bash
-python TaskB/baseline.py --folder random-IR-1.0s --fmin 50 --fmax 10000
+# Task A: PSO over S(P) = {mu, D/mu, T0/mu, Ly, op_x, op_y}
+python3 TaskA/baseline.py random-IR-10-1.0s
+
+# Task B: modal identification from the IR
+python3 TaskB/baseline.py --folder random-IR-10-1.0s --fmin 50 --fmax 10000
 ```
 
-To evaluate the estimated results:
+### Evaluating the results
 
 ```bash
-python TaskA/eval.py
+python3 TaskA/eval.py --experiment_folder experiment_results_taskA --target_folder random-IR-10-1.0s
+python3 TaskB/eval.py --experiment_folder experiment_results_TaskB \
+                     --target_folder random-IR-10-1.0s \
+                     --fmin 50 --fmax 10000
 ```
-
-The script handle different arguments, consult their help by calling them with the `-h` or `--help` argument.
-
-The baseline scripts format the results as CSV files in the format we need to evaluate your proposals. You should use the same functions to get consistent output. The formatting includes information about the run time and the number of iterations performed (if any) by your algorithm. The run time is the time your algorithm takes to estimate the parameters once the IR is given: for data-driven algorithms that require a training, the run time is intended only as the time it takes for inference (provided that the training is done just once for any later inference).
 
 ---
 
 ## How to Participate
 
 Participation is open to everyone: individual researchers, academic research groups, and teams from private companies.
+
+**Important**: all perspective participants are kindly asked to send a contact email to the organizers even if they are unsure whether they will submit their results or not. This is to ensure that we can bulk send timely notifications via email to anyone who is interested in the challenge.
 
 Each team may submit **up to two proposals per task**. Proposals should not be just slightly different (e.g. two identical Deep Learning architectures trained with different hyperparameters) but have significant differences, justifying the need for a second short paper.
 
@@ -115,8 +133,8 @@ These six parameters uniquely define the plate’s impulse response and modal di
 | Rigidity ratio | D/μ | derived | Flexural rigidity normalized by μ |
 | Tension ratio | T₀/μ | derived | Tension normalized by μ |
 | Plate height | Ly | [1.1, 4.0] m | Plate vertical dimension |
-| Output position (x) | xo | [0.49 · Lx, Lx] | Output transducer x-position |
-| Output position (y) | yo | [0.51 · Ly, Ly] | Output transducer y-position |
+| Output position (x) | xo | [0.51, 1.0] | Output transducer x-position (fraction of Lx) |
+| Output position (y) | yo | [0.51, 1.0] | Output transducer y-position (fraction of Ly) |
 
 ### Fixed parameters (not to be estimated)
 
@@ -154,18 +172,24 @@ More details are provided in **`DAFxChallengeDetails.pdf`**.
 
 All methods are allowed **except brute-force approaches**.
 
-### ❌ Brute-force methods (not allowed):
-- Random search
-- Grid search
-- Any iterative method that does not exploit problem knowledge or the loss surface
+### ❌ Not allowed
+- Random search, grid search.
+- Any iterative method that does not exploit problem knowledge or the loss
+  surface.
 
-### ✅ Allowed methods include:
-- Metaheuristic algorithms (e.g., PSO, GSA, etc.)
-- Deep learning approaches
-- DDSP-based models
-- Optimization techniques using problem-informed strategies
+### ✅ Allowed
+- Metaheuristic algorithms (e.g. PSO, GSA).
+- Deep-learning approaches.
+- DDSP-based models.
+- Optimization techniques using problem-informed strategies.
 
-If unsure whether your method qualifies, contact the organizers.
+**Important**: A priori knowledge of the plate's modal distribution — such as
+the analytical frequency formula (Eq. 8) or the decay behaviour described in
+Section II-C of the paper — must **not** be used. Only the provided synthetic
+impulse responses should be employed, as if they were obtained from actual
+measurements.
+
+If unsure whether your method qualifies, contact the organisers.
 
 ---
 
@@ -183,9 +207,6 @@ Each proposal must include:
 
 ## 📫 Organizers Contact
 
-For questions or clarifications, please contact the organizers via email:
-Leonardo Gabrielli <l.gabrielli@staff.univpm.it>
-Michele Ducceschi <michele.ducceschi@unibo.it>
-
-
-
+For questions or clarifications, please contact the organisers by email:
+- Leonardo Gabrielli <l.gabrielli@staff.univpm.it>
+- Michele Ducceschi <michele.ducceschi@unibo.it>

@@ -163,28 +163,19 @@ def load_estimated(csv_path):
 # MODE MATCHING
 # ---------------------------------------------------------------------------
 
-def match_modes_by_frequency(f0_actual, f0_ident):
+def match_modes_by_frequency(f0_actual, f0_ident, match_threshold_octaves=0.5):
     """
-    Match identified modes to actual modes by closest frequency.
+    Match identified modes to actual modes one-to-one.
 
-    Each identified mode is assigned to its nearest actual mode.  If multiple
-    identified modes map to the same actual mode, only the closest one is
-    kept; the others are treated as extra (unmatched) identified modes.
-
-    Parameters
-    ----------
-    f0_actual : np.ndarray, shape (M,)
-    f0_ident  : np.ndarray, shape (M_tilde,)
-
-    Returns
-    -------
-    matches : list of (actual_idx, ident_idx) tuples
-        One-to-one mapping between actual and identified modes.
-    unmatched_actual : list of int
-        Indices into f0_actual that have no corresponding identified mode.
-    unmatched_ident : list of int
-        Indices into f0_ident that have no corresponding actual mode.
+    Matching is performed by optimal (Hungarian) assignment on the
+    log2-frequency distance, so that confusing 100 Hz with 110 Hz carries
+    the same cost as 1 kHz with 1.1 kHz. A pair is only accepted if its
+    log2-distance is <= ``match_threshold_octaves`` (default: half an
+    octave); pairs beyond are treated as unmatched, yielding either a
+    missed actual mode or a spurious identified mode.
     """
+    from scipy.optimize import linear_sum_assignment
+
     M = len(f0_actual)
     M_tilde = len(f0_ident)
 
@@ -193,33 +184,36 @@ def match_modes_by_frequency(f0_actual, f0_ident):
     if M_tilde == 0:
         return [], list(range(M)), []
 
-    # For each identified mode, find closest actual mode
-    # Use the Hungarian-style greedy: sort identified by frequency,
-    # then assign greedily by smallest distance, preferring closer pairs.
+    eps = 1e-12
+    la = np.log2(np.maximum(f0_actual, eps))
+    li = np.log2(np.maximum(f0_ident, eps))
+    cost = np.abs(la[:, None] - li[None, :])  # (M, M_tilde)
 
-    # Build cost matrix (absolute frequency difference)
-    cost = np.abs(f0_actual[:, None] - f0_ident[None, :])  # (M, M_tilde)
+    # Pad to square with a "reject" cost so linear_sum_assignment handles
+    # non-square inputs; any pair whose true cost exceeds the threshold is
+    # then dropped.
+    reject = match_threshold_octaves * 10.0
+    if M > M_tilde:
+        cost_sq = np.hstack([cost, np.full((M, M - M_tilde), reject)])
+    elif M_tilde > M:
+        cost_sq = np.vstack([cost, np.full((M_tilde - M, M_tilde), reject)])
+    else:
+        cost_sq = cost
 
-    matches = []
-    used_actual = set()
-    used_ident = set()
+    row_ind, col_ind = linear_sum_assignment(cost_sq)
 
-    # Greedy matching: repeatedly pick the globally smallest cost pair
-    flat_order = np.argsort(cost, axis=None)
-    for flat_idx in flat_order:
-        a_idx = flat_idx // M_tilde
-        i_idx = flat_idx % M_tilde
-        if a_idx in used_actual or i_idx in used_ident:
-            continue
-        matches.append((int(a_idx), int(i_idx)))
-        used_actual.add(a_idx)
-        used_ident.add(i_idx)
-        if len(matches) == min(M, M_tilde):
-            break
+    matches, used_actual, used_ident = [], set(), set()
+    for r, c in zip(row_ind, col_ind):
+        if r >= M or c >= M_tilde:
+            continue  # padding
+        if cost[r, c] > match_threshold_octaves:
+            continue  # beyond reject threshold
+        matches.append((int(r), int(c)))
+        used_actual.add(int(r))
+        used_ident.add(int(c))
 
     unmatched_actual = sorted(set(range(M)) - used_actual)
     unmatched_ident = sorted(set(range(M_tilde)) - used_ident)
-
     return matches, unmatched_actual, unmatched_ident
 
 
@@ -287,10 +281,12 @@ def compute_taskB_metrics(f0_actual, sigma_actual, gain_actual,
         sigma_est = sigma_ident[i_idx]
         gain_est = gain_ident[i_idx]
 
-        # Relative errors (guard against zero reference)
-        re_f = abs(f0_est - f0_ref) / abs(f0_ref) if abs(f0_ref) > 1e-30 else 0.0
-        re_s = abs(sigma_est - sigma_ref) / abs(sigma_ref) if abs(sigma_ref) > 1e-30 else 0.0
-        re_g = abs(gain_est - gain_ref) / abs(gain_ref) if abs(gain_ref) > 1e-30 else 0.0
+        # Relative errors (guard against zero reference) clipped to 1.0 so
+        # matched outliers live on the same [0,1] scale as unmatched modes
+        # (paper Eqs. 19–21).
+        re_f = min(1.0, abs(f0_est - f0_ref) / abs(f0_ref)) if abs(f0_ref) > 1e-30 else 0.0
+        re_s = min(1.0, abs(sigma_est - sigma_ref) / abs(sigma_ref)) if abs(sigma_ref) > 1e-30 else 0.0
+        re_g = min(1.0, abs(gain_est - gain_ref) / abs(gain_ref)) if abs(gain_ref) > 1e-30 else 0.0
 
         re_omega_terms[a_idx] = re_f
         re_sigma_terms[a_idx] = re_s
@@ -326,8 +322,14 @@ def compute_taskB_metrics(f0_actual, sigma_actual, gain_actual,
     # Combined relative error (Eq. 22)
     RE0 = (RE_omega + RE_sigma + RE_gain) / 3.0
 
-    # Final metric (Eq. 24)
-    RE = RE0 + delta_M
+    # Final metric (paper Eq. 27, amended):
+    #   RE = RE0 + lambda * min(1, ΔM / M)
+    # The ratio ΔM/M keeps the mode-count term on the same [0,1] scale as
+    # RE0; the outer min(1, .) mirrors the per-mode clipping and bounds the
+    # final metric in [0, 1 + lambda] (default: [0, 2]).
+    lambda_deltaM = 1.0
+    delta_M_ratio = min(1.0, delta_M / M)
+    RE = RE0 + lambda_deltaM * delta_M_ratio
 
     return dict(
         RE_omega=RE_omega,

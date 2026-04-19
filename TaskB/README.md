@@ -6,8 +6,14 @@ This folder contains two scripts:
 
 | Script         | Purpose                                              |
 | :------------- | :--------------------------------------------------- |
-| `baseline.py`  | Identify modal parameters from plate parameter CSVs  |
+| `baseline.py`  | Identify modal parameters directly from the IR files |
 | `eval.py`      | Evaluate identified parameters against ground truth  |
+
+The baseline reads only the IR `.npz` files (unnormalized displacement +
+metadata) — no plate parameters — in accordance with the "no a priori
+modal knowledge" rule of the challenge. The sibling `.wav` is peak-
+normalized and is not used by this task, since the normalization
+discards the `b_m` amplitude scale.
 
 ---
 
@@ -25,10 +31,11 @@ python TaskB/baseline.py --folder <folder_name> --fmin <Hz> --fmax <Hz> [--root 
 
 | Option     | Required | Description                                                            |
 | :--------- | :------: | :--------------------------------------------------------------------- |
-| `--folder` |   yes    | Folder containing the input `random_IR_params_*.csv` files.            |
+| `--folder` |   yes    | Folder containing the input `random_IR_*.npz` files.                   |
 | `--fmin`   |   yes    | Lower frequency bound of the modal band to analyse (Hz).               |
 | `--fmax`   |   yes    | Upper frequency bound of the modal band to analyse (Hz).               |
 | `--root`   |    no    | Project root path, if running from elsewhere (default: `.`).           |
+| `--prom-db`, `--min-dist-hz`, `--prom-win-hz` | no | Peak-picker knobs (defaults: 6 dB, 2 Hz, same). |
 
 ### Example
 
@@ -45,7 +52,11 @@ This will:
 
 ### Input format
 
-Each input CSV must match the pattern `random_IR_params_*.csv` and contain plate, material, geometry, and loss parameters. Expected columns include `Lx`, `Ly`, `h`, `T0`, `rho`, `E`, `nu`, `SR`, `DURATION_S`, `fmax`, `T60_F0`, `T60_F1`, `loss_F1`, `fp_x`, `fp_y`, `op_x`, `op_y`, and `velCalc`. Optional peak-picking columns are `PROM_DB`, `MIN_DIST_HZ`, `PROM_WIN_HZ`. Missing fields fall back to defaults defined in `BASE_DEFAULTS` inside `baseline.py`. All column names are case-insensitive.
+Each input file is a `random_IR_XXXX.npz` containing the scientific,
+unnormalized displacement IR (float64) together with `sample_rate`,
+`duration_s`, and `normalization_factor` metadata. The sibling
+`random_IR_XXXX.wav` is peak-normalized and cannot be used for Task B:
+the normalization discards the `b_m` amplitude scale.
 
 ### Output format
 
@@ -63,18 +74,26 @@ Each result CSV contains three columns:
 
 ### Metrics
 
-The evaluation implements the metrics from the challenge paper (Section IV-C, Equations 19–24):
+The evaluation implements the metrics from the challenge paper (Section IV-C),
+with two amendments over the original formulas: per-mode errors are clipped
+to 1.0, and the mode-count term is normalised by M and clipped so the final
+metric is strictly bounded.
 
 | Symbol | Formula                                          | Description                        |
 | :----- | :----------------------------------------------- | :--------------------------------- |
-| RE_Ω   | (1/M) Σ \|Ω_est − Ω_ref\| / Ω_ref              | Relative error on frequencies      |
-| RE_σ   | (1/M) Σ \|σ_est − σ_ref\| / σ_ref               | Relative error on decay constants  |
-| RE_b   | (1/M) Σ \|b_est − b_ref\| / b_ref               | Relative error on gains            |
-| RE0    | (RE_Ω + RE_σ + RE_b) / 3                        | Combined relative error            |
-| ΔM     | \|M − M̃\|                                       | Mode-count mismatch penalty        |
-| **RE** | **RE0 + ΔM**                                     | **Final ranking metric**           |
+| re_Ω   | min(1, \|Ω_est − Ω_ref\| / Ω_ref) per mode       | Clipped per-mode frequency error   |
+| re_σ   | min(1, \|σ_est − σ_ref\| / σ_ref) per mode       | Clipped per-mode decay error       |
+| re_b   | min(1, \|b_est − b_ref\| / b_ref) per mode       | Clipped per-mode gain error        |
+| RE_Ω, RE_σ, RE_b | (1/M) Σ re_* over all actual modes     | Mean per-plate errors              |
+| RE0    | (RE_Ω + RE_σ + RE_b) / 3                        | Combined relative error (∈ [0,1])  |
+| ΔM     | \|M − M̃\|                                       | Mode-count mismatch                 |
+| **RE** | **RE0 + λ · min(1, ΔM/M)**                       | **Final ranking metric (∈ [0, 1+λ], default λ = 1)** |
 
-Identified and actual modes are matched one-to-one by closest frequency. Unmatched actual modes are assigned an estimated value of zero (relative error = 1.0 per component), as specified in the paper.
+Identified and actual modes are matched one-to-one by optimal (Hungarian)
+assignment on the log-frequency distance, with a reject threshold of half
+an octave by default. Pairs beyond the threshold are treated as unmatched:
+the actual mode contributes 1.0 to each per-component error, and the
+identified mode contributes to ΔM as a spurious mode.
 
 ### Usage
 

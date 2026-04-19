@@ -14,11 +14,15 @@ def multi_scale_spectral_loss(target, candidate, stft_configs=None):
     if stft_configs is None:
         stft_configs = [(512, 128), (2048, 512), (8192, 2048)]
     
-    # Compute STFTs at multiple resolutions
+    # Compute STFTs at multiple resolutions (log-magnitude L1: the
+    # unnormalized displacement IRs have amplitudes ~1e-8, so a linear-
+    # magnitude loss compresses the dynamic range and is uninformative
+    # across candidates).
+    eps = 1e-10
     losses = []
     for n_fft, hop_length in stft_configs:
         target_stft = np.abs(librosa.stft(target, n_fft=n_fft, hop_length=hop_length))
         candidate_stft = np.abs(librosa.stft(candidate, n_fft=n_fft, hop_length=hop_length))
-        loss = np.mean(np.abs(target_stft - candidate_stft))
+        loss = np.mean(np.abs(np.log(target_stft + eps) - np.log(candidate_stft + eps)))
         losses.append(loss)
     return np.mean(losses)

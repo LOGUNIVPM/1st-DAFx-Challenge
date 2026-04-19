@@ -75,41 +75,48 @@ OUTPUT_DIR = "experiment_results_taskA"
 
 def load_target_files(target_folder):
     """
-    Load target IR files from the target folder.
-    Only WAV files are required - no parameter CSV files needed.
-    
+    Load target IR files (random_IR_XXXX.npz) from the target folder.
+
+    The .npz is the official input for Task A (unnormalized displacement
+    plus metadata). The sibling .wav is peak-normalized and loses the
+    absolute amplitude — which carries mu = rho * h — so it is not
+    accepted here.
+
     Args:
-        target_folder: Path to folder containing *.wav files
-        
+        target_folder: Path to folder containing random_IR_*.npz files
+
     Returns:
         list: List of tuples (audio, filename)
     """
     target_path = Path(target_folder)
-    
+
     if not target_path.exists():
         raise ValueError(f"Target folder {target_folder} does not exist")
-    
-    # Find all WAV files
-    wav_files = list(target_path.glob("*.wav"))
-    
-    if len(wav_files) == 0:
-        raise ValueError(f"No *.wav files found in {target_folder}")
-    
+
+    # Official input: the scientific .npz (unnormalized IR + metadata).
+    npz_files = sorted(target_path.glob("random_IR_[0-9]*.npz"))
+
+    if len(npz_files) == 0:
+        raise ValueError(
+            f"No random_IR_*.npz files found in {target_folder}. "
+            f"Task A requires the unnormalized .npz input; the peak-normalized "
+            f".wav cannot be used because it discards the mu = rho*h amplitude "
+            f"scale."
+        )
+
     targets = []
-    
+
     print(f"Loading target files from {target_folder}")
-    
-    for wav_file in sorted(wav_files):
+
+    for npz_file in npz_files:
         try:
-            # Load audio
-            audio, sr = librosa.load(wav_file, sr=SAMPLE_RATE)
-            
-            targets.append((audio, wav_file.name))
-            print(f"  Loaded {wav_file.name}: {len(audio)} samples")
-            
+            with np.load(str(npz_file)) as data:
+                audio = np.asarray(data["ir"], dtype=np.float64)
+            targets.append((audio, npz_file.name))
+            print(f"  Loaded {npz_file.name}: {len(audio)} samples")
         except Exception as e:
-            print(f"Error loading {wav_file}: {e}")
-    
+            print(f"Error loading {npz_file}: {e}")
+
     print(f"Successfully loaded {len(targets)} target files")
     return targets
 
@@ -127,10 +134,11 @@ def synthesize_plate(param_dict, duration, sample_rate=SAMPLE_RATE):
         np.array: Synthesized audio signal
     """
     return ModalPlate.synthesize_from_params(
-        param_dict, 
-        duration=duration, 
-        method='velocity',  # Use velocity method for consistency
-        sample_rate=sample_rate
+        param_dict,
+        duration=duration,
+        method='ir',  # displacement, matches the dataset
+        sample_rate=sample_rate,
+        normalize=False  # keep absolute amplitude so mu is identifiable
     )
 
 
@@ -138,6 +146,30 @@ def save_parameters_csv(params_dict, filepath):
     """Save parameters to CSV file."""
     df = pd.DataFrame([params_dict])
     df.to_csv(filepath, index=False)
+
+
+# Six identifiable parameters S(P) = {mu, D/mu, T0/mu, Ly, op_x, op_y}.
+# Raw (rho, h, E, T0) map through (mu, D/mu, T0/mu), which is the
+# identifiable parameterisation (Eq. 15 of the paper).
+DERIVED_KEYS = ["mu", "D_mu", "T0_mu", "Ly", "op_x", "op_y"]
+
+
+def raw_to_derived(raw_params):
+    """Return the 6-column S(P) dict from a full raw-parameter dict."""
+    rho = float(raw_params["rho"])
+    h = float(raw_params["h"])
+    E = float(raw_params["E"])
+    T0 = float(raw_params["T0"])
+    nu = float(raw_params.get("nu", 0.25))
+    mu = rho * h
+    return {
+        "mu": mu,
+        "D_mu": E * h * h / (12.0 * (1 - nu ** 2) * rho),
+        "T0_mu": T0 / mu,
+        "Ly": float(raw_params["Ly"]),
+        "op_x": float(raw_params["op_x"]),
+        "op_y": float(raw_params["op_y"]),
+    }
 
 
 # Global variables for cost function
@@ -277,13 +309,26 @@ def run_baseline_experiment(target_folder="random-IR-10-1.0s"):
             # Use sequential numbering
             target_index = f"{i+1:04d}"
         
-        # Save best parameters
+        # Save best parameters in the six-column S(P) form required by the eval.
+        # PSO still runs in the raw 7-D space (unchanged); we only convert the
+        # final result before writing, since any point on the raw-parameter
+        # fibre maps to the same S(P).
         best_params_file = output_path / f"best_params_{target_index}.csv"
-        save_parameters_csv(best_params, best_params_file)
-        
-        # Save best audio
+        save_parameters_csv(raw_to_derived(best_params), best_params_file)
+
+        # Save best audio: unnormalized npz (official) + peak-normalized wav (listening).
+        best_peak = float(np.max(np.abs(best_audio)))
+        best_norm = best_peak if best_peak > 0 else 1.0
         best_audio_file = output_path / f"best_audio_{target_index}.wav"
-        sf.write(str(best_audio_file), best_audio, SAMPLE_RATE)
+        sf.write(str(best_audio_file), (best_audio / best_norm).astype(np.float32),
+                 SAMPLE_RATE, subtype='FLOAT')
+        np.savez(
+            str(output_path / f"best_audio_{target_index}.npz"),
+            ir=best_audio.astype(np.float64),
+            sample_rate=np.int32(SAMPLE_RATE),
+            duration_s=np.float64(target_duration),
+            normalization_factor=np.float64(best_norm),
+        )
         
         # Store results
         iterations_required = PARTICLES * ITERATIONS

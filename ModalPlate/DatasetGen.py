@@ -172,15 +172,30 @@ def generate_dataset(num_ir=10, duration=5.0, sample_rate=44100):
             # Generate filenames with zero-padded numbers
             file_index = f"{i+1:04d}"
             audio_filename = f"random_IR_{file_index}.wav"
+            npz_filename = f"random_IR_{file_index}.npz"
             params_filename = f"random_IR_params_{file_index}.csv"
             modes_filename = f"random_IR_modes_{file_index}.csv"
-            
+
             audio_path = output_dir / audio_filename
+            npz_path = output_dir / npz_filename
             params_path = output_dir / params_filename
             modes_path = output_dir / modes_filename
-            
-            # Save audio file
-            sf.write(str(audio_path), audio, sample_rate, subtype='FLOAT')
+
+            # Save a peak-normalized wav (for listening) and a scientific npz
+            # with the unnormalized IR and metadata (official input for the tasks).
+            # The unnormalized amplitude carries mu = rho*h (Task A) and the
+            # b_m scale (Task B), so it must not be discarded.
+            peak = float(np.max(np.abs(audio)))
+            norm_factor = peak if peak > 0 else 1.0
+            audio_norm = (audio / norm_factor).astype(np.float32)
+            sf.write(str(audio_path), audio_norm, sample_rate, subtype='FLOAT')
+            np.savez(
+                str(npz_path),
+                ir=audio.astype(np.float64),
+                sample_rate=np.int32(sample_rate),
+                duration_s=np.float64(duration),
+                normalization_factor=np.float64(norm_factor),
+            )
             
             # Save parameters CSV
             save_parameters_csv(params, params_path)

@@ -8,11 +8,11 @@ This script evaluates the results from any experiment (e.g. baseline.py) by comp
 2. Generated audio vs target audio using MSE of log magnitude FFT
 
 Usage:
-    python eval.py [experiment_results_folder] [target_folder]
+    python eval.py --experiment_folder [experiment_results_folder] --target_folder [target_folder]
     
 Arguments:
-    experiment_results_folder: Path to folder containing experiment results (default: experiment_results_taskA)
-    target_folder: Path to folder containing target (ground truth) parameter CSV files (default: random-IR-10-1.0s)
+    --experiment_folder: Path to folder containing experiment results (mandatory)
+    --target_folder: Path to folder containing target (ground truth) parameter CSV files (mandatory)
     
 Output:
     - Evaluation metrics printed to console
@@ -25,6 +25,8 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 import librosa
@@ -42,6 +44,92 @@ from ModalPlate.ParamRange import (params as plate_params,
 # ===========================
 
 SAMPLE_RATE = 44100
+
+# Six identifiable parameters S(P) = {mu, D/mu, T0/mu, Ly, op_x, op_y} (Eq. 15).
+# Their induced ranges from the raw-parameter box in ParamRange.py follow from
+# the monotonicity of each map; we compute them once here so the NMSE
+# denominator is meaningful for the three derived quantities.
+DERIVED_KEYS = ["mu", "D_mu", "T0_mu", "Ly", "op_x", "op_y"]
+
+# Aliases tolerated in submission CSVs (case-insensitive).
+DERIVED_ALIASES = {
+    "mu":    ["mu", "rho_h", "rhoh"],
+    "D_mu":  ["D_mu", "d_mu", "D/mu", "d/mu", "Dmu"],
+    "T0_mu": ["T0_mu", "t0_mu", "T0/mu", "t0/mu", "T0mu"],
+    "Ly":    ["Ly", "ly", "L_y"],
+    "op_x":  ["op_x", "opx", "xo", "x_o"],
+    "op_y":  ["op_y", "opy", "yo", "y_o"],
+}
+
+
+def _derived_bounds():
+    rho_lo, rho_hi = plate_params["rho"].low, plate_params["rho"].high
+    h_lo, h_hi = plate_params["h"].low, plate_params["h"].high
+    E_lo, E_hi = plate_params["E"].low, plate_params["E"].high
+    T0_lo, T0_hi = plate_params["T0"].low, plate_params["T0"].high
+    nu = plate_params["nu"].low
+    return {
+        "mu":    (rho_lo * h_lo, rho_hi * h_hi),
+        "D_mu":  (E_lo * h_lo * h_lo / (12.0 * (1 - nu ** 2) * rho_hi),
+                  E_hi * h_hi * h_hi / (12.0 * (1 - nu ** 2) * rho_lo)),
+        "T0_mu": (T0_lo / (rho_hi * h_hi), T0_hi / (rho_lo * h_lo)),
+        "Ly":    (plate_params["Ly"].low, plate_params["Ly"].high),
+        "op_x":  (plate_params["op_x"].low, plate_params["op_x"].high),
+        "op_y":  (plate_params["op_y"].low, plate_params["op_y"].high),
+    }
+
+
+DERIVED_BOUNDS = _derived_bounds()
+
+
+def _col_lookup(df, candidates):
+    lower = {c.lower(): c for c in df.columns}
+    for cand in candidates:
+        if cand.lower() in lower:
+            return lower[cand.lower()]
+    return None
+
+
+def raw_to_derived(raw):
+    """Map a raw-parameter dict to S(P) = {mu, D/mu, T0/mu, Ly, op_x, op_y}."""
+    rho = float(raw["rho"]); h = float(raw["h"])
+    E = float(raw["E"]); T0 = float(raw["T0"])
+    nu = float(raw.get("nu", plate_params["nu"].low))
+    mu = rho * h
+    return {
+        "mu": mu,
+        "D_mu": E * h * h / (12.0 * (1 - nu ** 2) * rho),
+        "T0_mu": T0 / mu,
+        "Ly": float(raw["Ly"]),
+        "op_x": float(raw["op_x"]),
+        "op_y": float(raw["op_y"]),
+    }
+
+
+def load_derived_csv(csv_file):
+    """Load S(P) from a CSV; accept either 6-col S(P) or raw 7-col format."""
+    df = pd.read_csv(csv_file)
+    if df.empty:
+        raise ValueError(f"{csv_file} is empty")
+    row = df.iloc[0].to_dict()
+    # Prefer 6-col S(P) if all columns resolve
+    cols = {k: _col_lookup(df, DERIVED_ALIASES[k]) for k in DERIVED_KEYS}
+    if all(c is not None for c in cols.values()):
+        return {k: float(row[cols[k]]) for k in DERIVED_KEYS}
+    # Else treat as raw seven-column submission (backwards-compatible with
+    # DatasetGen's ground-truth CSVs and legacy submissions).
+    for req in ["rho", "h", "E", "T0", "Ly", "op_x", "op_y"]:
+        c = _col_lookup(df, [req])
+        if c is None:
+            raise ValueError(
+                f"{csv_file}: missing both S(P) columns and raw '{req}'. "
+                f"Found columns: {list(df.columns)}")
+    nu_col = _col_lookup(df, ["nu"])
+    raw = {k: float(row[_col_lookup(df, [k])])
+           for k in ["rho", "h", "E", "T0", "Ly", "op_x", "op_y"]}
+    if nu_col is not None:
+        raw["nu"] = float(row[nu_col])
+    return raw_to_derived(raw)
 
 # ===========================
 # UTILITY FUNCTIONS
@@ -63,52 +151,24 @@ def load_parameter_csv(csv_file):
 
 def compute_normalized_parameter_mse(target_params, estimated_params):
     """
-    Compute normalized MSE between parameter sets using parameter ranges.
-    
-    Args:
-        target_params: Dictionary of target parameters
-        estimated_params: Dictionary of estimated parameters
-        
-    Returns:
-        tuple: (normalized_mse, individual_errors)
+    Compute NMSE on the six identifiable parameters S(P)
+    = {mu, D/mu, T0/mu, Ly, op_x, op_y} (paper Eq. 17).
+
+    Both inputs must be dicts keyed by the six S(P) names.
+    Denominators are the S(P) bounding box induced by ParamRange.py.
     """
-    # Get common parameter keys
-    common_keys = set(target_params.keys()) & set(estimated_params.keys())
-    
-    if len(common_keys) == 0:
-        raise ValueError("No common parameters found between target and estimated")
-    
     normalized_errors = []
     individual_errors = {}
-    
-    for key in common_keys:
-        target_val = target_params[key]
-        estimated_val = estimated_params[key]
-        
-        if key in plate_params:
-            param_range = plate_params[key]
-            range_span = param_range.high - param_range.low
-            
-            if range_span > 0:
-                # Normalize error by parameter range
-                normalized_error = ((target_val - estimated_val) / range_span) ** 2
-            else:
-                # Fixed parameter - perfect match expected
-                normalized_error = 0.0 if target_val == estimated_val else 1.0
+    for key in DERIVED_KEYS:
+        lo, hi = DERIVED_BOUNDS[key]
+        span = hi - lo
+        if span > 0:
+            err = ((target_params[key] - estimated_params[key]) / span) ** 2
         else:
-            # Fallback: use relative error if possible
-            if abs(target_val) > 1e-10:
-                normalized_error = ((target_val - estimated_val) / target_val) ** 2
-            else:
-                normalized_error = (target_val - estimated_val) ** 2
-        
-        normalized_errors.append(normalized_error)
-        individual_errors[key] = normalized_error
-    
-    # Compute mean normalized MSE
-    normalized_mse = np.mean(normalized_errors)
-    
-    return normalized_mse, individual_errors
+            err = 0.0 if target_params[key] == estimated_params[key] else 1.0
+        normalized_errors.append(err)
+        individual_errors[key] = err
+    return float(np.mean(normalized_errors)), individual_errors
 
 
 def compute_spectral_mse(target_audio, estimated_audio, sample_rate=SAMPLE_RATE):
@@ -176,9 +236,9 @@ def find_matching_files(experiment_folder, target_folder):
         # Extract file ID from experiment filename (e.g., best_params_0001.csv -> 0001)
         file_id = experiment_param_file.stem.split('_')[-1]
         
-        # Find corresponding files
-        experiment_audio_file = experiment_path / f"best_audio_{file_id}.wav"
-        target_audio_file = target_path / f"random_IR_{file_id}.wav"  # Target audio from ground truth folder
+        # Find corresponding files (npz is the official, unnormalized input)
+        experiment_audio_file = experiment_path / f"best_audio_{file_id}.npz"
+        target_audio_file = target_path / f"random_IR_{file_id}.npz"
         target_params_file = target_path / f"random_IR_params_{file_id}.csv"
         
         # Check if all required files exist
@@ -248,22 +308,28 @@ def run_evaluation(experiment_folder="experiment_results_taskA", target_folder="
         print("=" * 40)
         
         try:
-            # Load parameters
+            # Load parameters in S(P) form (conversion from raw happens inside
+            # load_derived_csv for GT CSVs or legacy raw submissions).
             print(f"Loading parameters...")
-            estimated_params = load_parameter_csv(experiment_params_file)
-            target_params = load_parameter_csv(target_params_file)
-            
-            # Compute parameter NMSE
+            estimated_params = load_derived_csv(experiment_params_file)
+            target_params = load_derived_csv(target_params_file)
+
+            # Compute parameter NMSE (Eq. 17) on S(P).
             param_nmse, individual_errors = compute_normalized_parameter_mse(
                 target_params, estimated_params
             )
-            
+
             print(f"Parameter NMSE: {param_nmse:.6f}")
-            
-            # Load audio files
+
+            # Load audio files (official input is the unnormalized .npz).
             print(f"Loading audio files...")
-            estimated_audio, _ = librosa.load(experiment_audio_file, sr=SAMPLE_RATE)
-            target_audio, _ = librosa.load(target_audio_file, sr=SAMPLE_RATE)
+
+            def _load_ir(npz_path):
+                with np.load(str(npz_path)) as d:
+                    return np.asarray(d["ir"], dtype=np.float64)
+
+            estimated_audio = _load_ir(experiment_audio_file)
+            target_audio = _load_ir(target_audio_file)
             
             # Compute spectral MSE
             spectral_mse = compute_spectral_mse(target_audio, estimated_audio)
@@ -407,19 +473,17 @@ def run_evaluation(experiment_folder="experiment_results_taskA", target_folder="
     histogram_file = experiment_path / "parameter_nmse_histogram.png"
     plt.savefig(histogram_file, dpi=300, bbox_inches='tight')
     print(f"Saved histogram to: {histogram_file}")
-    
-    plt.show()
-    
+    plt.close()
+
     # ===========================
     # CREATE BOXPLOT FOR INDIVIDUAL PARAMETER ERRORS
     # ===========================
     
     print(f"Creating boxplot for individual parameter errors...")
-    
-    # Get variable parameter names
-    variable_params = get_variable_params()
-    variable_param_names = list(variable_params.keys())
-    
+
+    # Plot the per-component errors on the six S(P) parameters.
+    variable_param_names = list(DERIVED_KEYS)
+
     # Collect individual errors for each parameter across all files
     param_errors_dict = {name: [] for name in variable_param_names}
     
@@ -466,9 +530,8 @@ def run_evaluation(experiment_folder="experiment_results_taskA", target_folder="
     boxplot_file = experiment_path / "individual_parameter_errors_boxplot.png"
     plt.savefig(boxplot_file, dpi=300, bbox_inches='tight')
     print(f"Saved boxplot to: {boxplot_file}")
-    
-    plt.show()
-    
+    plt.close()
+
     print(f"\nEvaluation completed successfully!")
     print(f"All results saved to: {experiment_path.absolute()}")
     
@@ -482,23 +545,20 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python eval.py                                          # Use default folders
-    python eval.py experiment_results_taskA random-IR-10-1.0s  # Specify folders
+    python eval.py --experiment_folder experiment_results_taskA --target_folder random-IR-10-1.0s
         """
     )
     
     parser.add_argument(
-        'experiment_folder',
-        nargs='?',
-        default='experiment_results_taskA',
-        help='Path to experiment results folder (default: experiment_results_taskA)'
+        '--experiment_folder',
+        required=True,
+        help='Path to experiment results folder (mandatory)'
     )
     
     parser.add_argument(
-        'target_folder', 
-        nargs='?',
-        default='random-IR-10-1.0s',
-        help='Path to ground truth folder (default: random-IR-10-1.0s)'
+        '--target_folder',
+        required=True,
+        help='Path to ground truth folder (mandatory)'
     )
     
     args = parser.parse_args()
@@ -506,7 +566,7 @@ Examples:
     try:
         results = run_evaluation(args.experiment_folder, args.target_folder)
         print("\nEvaluation completed successfully!")
-    
+
     except ValueError as e:
         print(f"\nError: {e}")
         print("\n" + "="*60)

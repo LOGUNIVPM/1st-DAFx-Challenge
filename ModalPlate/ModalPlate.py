@@ -13,6 +13,7 @@ except ImportError:
     pass  # Logger module may not be available in all contexts
 
 import os
+import time
 import soundfile as sf
 from scipy.io.wavfile import write
 # ---------------------------------------------------------
@@ -150,12 +151,17 @@ class ModalPlate:
 
         for m in range(DIM):
             omref, mind, nind = self.ov[m]
-            InWeight = np.cos(self.fp[0] * np.pi * mind) * np.cos(self.fp[1] * np.pi * nind)
-            OutWeight = np.cos(self.op[0] * np.pi * mind) * np.cos(self.op[1] * np.pi * nind)
+            # Paper Eq. 5b: Phi_m uses sin, not cos (matches simply-supported BCs).
+            InWeight = np.sin(self.fp[0] * np.pi * mind) * np.sin(self.fp[1] * np.pi * nind)
+            OutWeight = np.sin(self.op[0] * np.pi * mind) * np.sin(self.op[1] * np.pi * nind)
             sig = alpha + beta * omref**2
             G1vec[m] = 2 * np.cos(omref * k) * np.exp(-sig * k)
             G2vec[m] = np.exp(-2 * sig * k)
-            Pvec[m] = OutWeight * InWeight * k**2 * np.exp(-sig * k) / ms
+            # Paper Eq. 14: b_m = 4 T^2 Phi(xi,yi) Phi(xo,yo) r_m / (rho h Lx Ly)
+            # with Phi = (2/sqrt(Lx Ly)) sin(...) sin(...). The 4/(Lx Ly) from the
+            # two Phi factors, times 1/(rho h Lx Ly), gives an extra 1/(Lx Ly)
+            # relative to 1/ms where ms = 0.25 rho h Lx Ly.
+            Pvec[m] = 4.0 * OutWeight * InWeight * k**2 * np.exp(-sig * k) / (ms * self.Lx * self.Ly)
             sigma_vec[m] = sig
             f0_vec[m] = omref / (2 * np.pi)
         return G1vec, G2vec, Pvec, sigma_vec, f0_vec

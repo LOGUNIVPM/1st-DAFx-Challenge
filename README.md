@@ -3,6 +3,17 @@
 **Official repository for the 1st DAFx Parameter Estimation Challenge**
 Hosted at [DAFx26](http://dafx26.mit.edu/), Boston, 1–4 September 2026.
 
+## UPDATE: DATASET RELEASED + CONTACT FORM
+
+The DAFx Challenge is **now officially open**: the dataset has been released publicly!
+The dataset includes the synthetic IRs in numpy format (npz) generated with our modal plate model. These are the files to be used for the identification tasks, and they contain the actual displacement wave. Additionally float32 normalized wav files are included for quick listening, these are peak-amplitude-normalized. The dataset does not include the ground truth, which is kept secret—safely locked away in a 🐊 crocodile-surrounded castle ;)
+Only the parameter ranges are provided, among which parameters have been randomly selected.
+The ground truth will be used by the Challenge organizers to evaluate your results. You must provide an estimate for each IR, the results will be averaged among all IRs.
+Please find the dataset under the folder 2026-DATASET-STRIPPED
+
+Anyone who wishes to participate to the challenge or that is at least thinking about it, can send their contact email via [this form](https://forms.cloud.microsoft/e/cnEsR7ZFgY).
+Filling the form is not mandatory to be part of the challenge but allows the organizers to send timely updates if needed. The deadline for sending the results to the organizers is May 31st. Good luck!
+
 ---
 
 ## Introduction

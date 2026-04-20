@@ -1,0 +1,24 @@
+Random Plate Dataset Generation Summary
+========================================
+
+Duration per IR: 5.0s
+Sample rate: 44100 Hz
+
+Parameter Ranges Used:
+--------------------
+Lx: 1.0 (fixed)
+Ly: [1.1, 4.0]
+h: [0.001, 0.005]
+T0: [0.01, 1000.0]
+rho: [2430.0, 21230.0]
+E: [67000000000.0, 220000000000.0]
+nu: 0.25 (fixed)
+T60_DC: 6.0 (fixed)
+T60_F1: 2.0 (fixed)
+loss_F1: 500.0 (fixed)
+fp_x: 0.335 (fixed)
+fp_y: 0.467 (fixed)
+op_x: [0.51, 1.0]
+op_y: [0.51, 1.0]
+
+

@@ -52,6 +52,7 @@ Examples
 import sys
 import os
 import argparse
+import re
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -372,42 +373,53 @@ def find_matching_files(experiment_folder, target_folder):
     if not tgt_path.exists():
         raise ValueError(f"Target (ground-truth) folder does not exist: {target_folder}")
 
-    # Discover estimated files
-    est_files = sorted(exp_path.glob("random_IR_identifiedModes_*.csv"))
-    if not est_files:
-        # Also try a more generic pattern
-        est_files = sorted(exp_path.glob("*identifiedModes*.csv"))
-    if not est_files:
-        # Fallback: any CSV that is not an index
-        est_files = sorted(
-            f for f in exp_path.glob("*.csv")
-            if not f.name.startswith("_") and "evaluation" not in f.name.lower()
-        )
+    def _extract_trailing_id(path_obj):
+        m = re.search(r"_(\d+)\.csv$", path_obj.name, re.IGNORECASE)
+        return m.group(1) if m else None
 
-    # Build a map from file_id → estimated CSV
-    est_map = {}
+    # Discover estimated CSVs by suffix ..._xxxx.csv (prefix can be arbitrary).
+    est_files = sorted(
+        f for f in exp_path.glob("*.csv")
+        if not f.name.startswith("_") and "evaluation" not in f.name.lower()
+    )
+
+    # Build map: file_id -> estimated CSV (prefer names suggesting identified modes).
+    est_candidates = {}
     for f in est_files:
-        # Try to extract numeric ID from filename
-        parts = f.stem.split("_")
-        # Take the last purely-numeric segment
-        for part in reversed(parts):
-            if part.isdigit():
-                est_map[part] = f
-                break
+        file_id = _extract_trailing_id(f)
+        if file_id is None:
+            continue
+        est_candidates.setdefault(file_id, []).append(f)
 
-    # Find matching ground-truth files
+    est_map = {}
+    for file_id, files in est_candidates.items():
+        preferred = [
+            f for f in files
+            if "identified" in f.stem.lower() or "mode" in f.stem.lower()
+        ]
+        est_map[file_id] = preferred[0] if preferred else files[0]
+
+    # Build map: file_id -> ground-truth CSV (prefer names suggesting modal CSVs).
+    gt_candidates = {}
+    for f in sorted(tgt_path.glob("*.csv")):
+        file_id = _extract_trailing_id(f)
+        if file_id is None:
+            continue
+        gt_candidates.setdefault(file_id, []).append(f)
+
+    gt_map = {}
+    for file_id, files in gt_candidates.items():
+        preferred = [f for f in files if "mode" in f.stem.lower()]
+        gt_map[file_id] = preferred[0] if preferred else files[0]
+
+    # Find matching ground-truth files.
     matches = []
     for file_id, est_csv in sorted(est_map.items()):
-        # Ground-truth modes file
-        gt_csv = tgt_path / f"random_IR_modes_{file_id}.csv"
-        if not gt_csv.exists():
-            # Try alternative naming
-            gt_csv = tgt_path / f"random_IR_modes_{file_id}.csv"
-        if gt_csv.exists():
+        gt_csv = gt_map.get(file_id)
+        if gt_csv is not None:
             matches.append((est_csv, gt_csv, file_id))
         else:
-            print(f"  Warning: No ground-truth file found for ID {file_id} "
-                  f"(expected {gt_csv}), skipping.")
+            print(f"  Warning: No ground-truth CSV found ending with _{file_id}.csv, skipping.")
 
     return matches
 
@@ -445,8 +457,7 @@ def run_evaluation(experiment_folder, target_folder, fmin=0.0, fmax=np.inf,
     matches = find_matching_files(experiment_folder, target_folder)
     if not matches:
         print("ERROR: No matching file pairs found.")
-        print("  Estimated files should be named: random_IR_identifiedModes_XXXX.csv")
-        print("  Ground-truth files should be named: random_IR_modes_XXXX.csv")
+        print("  Expected convention: both estimated and target CSVs end with _XXXX.csv")
         return None
 
     print(f"Found {len(matches)} matching file pair(s).\n")

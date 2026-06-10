@@ -23,6 +23,7 @@ Output:
 import sys
 import os
 import argparse
+import re
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -38,12 +39,14 @@ from ModalPlate.ParamRange import (params as plate_params,
                                    ParamRange,
                                    get_variable_params,
                                    get_fixed_params)
+from ModalPlate.ModalPlate import ModalPlate
 
 # ===========================
 # CONFIGURATION
 # ===========================
 
 SAMPLE_RATE = 44100
+SYNTH_DURATION = 5.0
 
 # Six identifiable parameters S(P) = {mu, D/mu, T0/mu, Ly, op_x, op_y} (Eq. 15).
 # Their induced ranges from the raw-parameter box in ParamRange.py follow from
@@ -149,6 +152,66 @@ def load_parameter_csv(csv_file):
     return df.iloc[0].to_dict()
 
 
+def _load_raw_params_for_synthesis(csv_file):
+    """
+    Load raw plate parameters needed for synthesis from a participant CSV.
+
+    Returns:
+        dict: Full raw parameter dictionary accepted by ModalPlate.
+
+    Raises:
+        ValueError: If raw synthesis parameters are not present.
+    """
+    df = pd.read_csv(csv_file)
+    if df.empty:
+        raise ValueError(f"{csv_file} is empty")
+
+    required = ["rho", "h", "E", "T0", "Ly", "op_x", "op_y"]
+    row = df.iloc[0].to_dict()
+    cols = {k: _col_lookup(df, [k]) for k in required}
+
+    missing = [k for k, c in cols.items() if c is None]
+    if missing:
+        raise ValueError(
+            f"Cannot synthesize missing audio from {csv_file}: "
+            f"missing raw parameter columns {missing}. "
+            f"Found columns: {list(df.columns)}"
+        )
+
+    raw = {k: float(row[cols[k]]) for k in required}
+    nu_col = _col_lookup(df, ["nu"])
+    raw["nu"] = float(row[nu_col]) if nu_col is not None else float(plate_params["nu"].low)
+    return raw
+
+
+def _synthesize_missing_experiment_audio(params_csv_file, audio_npz_file):
+    """
+    Synthesize and save a missing best_audio_XXXX.npz using dataset settings.
+
+    Settings are forced to match dataset generation:
+        sample_rate=44100, duration=5.0, velCalc=False, normalize=False
+    """
+    raw_params = _load_raw_params_for_synthesis(params_csv_file)
+
+    plate = ModalPlate(sample_rate=SAMPLE_RATE, plate_params=raw_params)
+    audio = plate.synthesize_ir_method(
+        duration=SYNTH_DURATION,
+        velCalc=False,
+        normalize=False,
+    )
+
+    peak = float(np.max(np.abs(audio)))
+    norm_factor = peak if peak > 0 else 1.0
+
+    np.savez(
+        str(audio_npz_file),
+        ir=np.asarray(audio, dtype=np.float64),
+        sample_rate=np.int32(SAMPLE_RATE),
+        duration_s=np.float64(SYNTH_DURATION),
+        normalization_factor=np.float64(norm_factor),
+    )
+
+
 def compute_normalized_parameter_mse(target_params, estimated_params):
     """
     Compute NMSE on the six identifiable parameters S(P)
@@ -216,7 +279,8 @@ def find_matching_files(experiment_folder, target_folder):
         target_folder: Path to target folder containing the ground truth data
 
     Returns:
-        list: List of tuples (experiment_params_file, experiment_audio_file, target_audio_file, target_params_file, file_id)
+        list: List of tuples (experiment_params_file, experiment_audio_file,
+              target_audio_file, target_params_file, file_id)
     """
     experiment_path = Path(experiment_folder)
     target_path = Path(target_folder)
@@ -227,25 +291,65 @@ def find_matching_files(experiment_folder, target_folder):
     if not target_path.exists():
         raise ValueError(f"Target folder {target_folder} does not exist")
 
-    # Find all experiment parameter files
-    experiment_param_files = list(experiment_path.glob("best_params_*.csv"))
-    
+    def _extract_trailing_id(path_obj, ext):
+        m = re.search(rf"_(\d+)\.{ext}$", path_obj.name, re.IGNORECASE)
+        return m.group(1) if m else None
+
+    # Discover participant CSVs by suffix ..._xxxx.csv (prefix can be arbitrary).
+    experiment_param_files = sorted(
+        f for f in experiment_path.glob("*.csv")
+        if "evaluation" not in f.name.lower()
+    )
+
+    # Map file_id -> target npz (random_IR_XXXX.npz style, but prefix is ignored).
+    target_audio_map = {}
+    for f in sorted(target_path.glob("*.npz")):
+        file_id = _extract_trailing_id(f, "npz")
+        if file_id is not None:
+            target_audio_map.setdefault(file_id, f)
+
+    # Map file_id -> target parameter CSV (prefer files whose name includes "params").
+    target_param_candidates = {}
+    for f in sorted(target_path.glob("*.csv")):
+        file_id = _extract_trailing_id(f, "csv")
+        if file_id is None:
+            continue
+        target_param_candidates.setdefault(file_id, []).append(f)
+
+    target_param_map = {}
+    for file_id, files in target_param_candidates.items():
+        preferred = [f for f in files if "param" in f.stem.lower()]
+        target_param_map[file_id] = preferred[0] if preferred else files[0]
+
+    # Optional participant audio npz map; if absent we'll synthesize later.
+    experiment_audio_map = {}
+    for f in sorted(experiment_path.glob("*.npz")):
+        file_id = _extract_trailing_id(f, "npz")
+        if file_id is None:
+            continue
+        experiment_audio_map.setdefault(file_id, []).append(f)
+
     matches = []
-    
-    for experiment_param_file in sorted(experiment_param_files):
-        # Extract file ID from experiment filename (e.g., best_params_0001.csv -> 0001)
-        file_id = experiment_param_file.stem.split('_')[-1]
-        
-        # Find corresponding files (npz is the official, unnormalized input)
-        experiment_audio_file = experiment_path / f"best_audio_{file_id}.npz"
-        target_audio_file = target_path / f"random_IR_{file_id}.npz"
-        target_params_file = target_path / f"random_IR_params_{file_id}.csv"
-        
-        # Check if all required files exist
-        if (experiment_audio_file.exists() and
-            target_audio_file.exists() and
-            target_params_file.exists()):
-            
+
+    for experiment_param_file in experiment_param_files:
+        file_id = _extract_trailing_id(experiment_param_file, "csv")
+        if file_id is None:
+            continue
+
+        target_audio_file = target_audio_map.get(file_id)
+        target_params_file = target_param_map.get(file_id)
+
+        # Use participant-provided audio npz if available, otherwise default path
+        # where synthesized audio will be created.
+        exp_audio_candidates = experiment_audio_map.get(file_id, [])
+        if exp_audio_candidates:
+            preferred_audio = [p for p in exp_audio_candidates if "audio" in p.stem.lower()]
+            experiment_audio_file = preferred_audio[0] if preferred_audio else exp_audio_candidates[0]
+        else:
+            experiment_audio_file = experiment_path / f"best_audio_{file_id}.npz"
+
+        # Audio may be missing and can be synthesized later from parameters.
+        if target_audio_file is not None and target_params_file is not None:
             matches.append((
                 experiment_param_file,
                 experiment_audio_file,
@@ -253,15 +357,12 @@ def find_matching_files(experiment_folder, target_folder):
                 target_params_file,
                 file_id
             ))
-            
         else:
-            print(f"Warning: Missing files for ID {file_id}, skipping")
-            if not experiment_audio_file.exists():
-                print(f"  Missing: {experiment_audio_file}")
-            if not target_audio_file.exists():
-                print(f"  Missing: {target_audio_file}")
-            if not target_params_file.exists():
-                print(f"  Missing: {target_params_file}")
+            print(f"Warning: Missing target files for ID {file_id}, skipping")
+            if target_audio_file is None:
+                print(f"  Missing target IR npz ending with _{file_id}.npz")
+            if target_params_file is None:
+                print(f"  Missing target params CSV ending with _{file_id}.csv")
     
     return matches
 
@@ -323,6 +424,11 @@ def run_evaluation(experiment_folder="experiment_results_taskA", target_folder="
 
             # Load audio files (official input is the unnormalized .npz).
             print(f"Loading audio files...")
+
+            if not experiment_audio_file.exists():
+                print(f"Missing synthesized audio for ID {file_id}. Generating from parameters...")
+                _synthesize_missing_experiment_audio(experiment_params_file, experiment_audio_file)
+                print(f"Generated: {experiment_audio_file}")
 
             def _load_ir(npz_path):
                 with np.load(str(npz_path)) as d:

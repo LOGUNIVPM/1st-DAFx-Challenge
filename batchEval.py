@@ -49,6 +49,8 @@ import os
 import argparse
 import subprocess
 import csv
+import contextlib
+import re
 from pathlib import Path
 
 try:
@@ -75,6 +77,26 @@ def _contains_csv(folder: Path) -> bool:
 def _get_subfolders(folder: Path) -> list[Path]:
     """Return immediate sub-directories of *folder* (sorted)."""
     return sorted(p for p in folder.iterdir() if p.is_dir())
+
+
+def _natural_key(path: Path) -> list[object]:
+    """Sort folder names like 1, 2, 10 instead of pure lexicographic order."""
+    parts = re.split(r"(\d+)", path.name)
+    return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self._streams = streams
+
+    def write(self, data):
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self._streams:
+            stream.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +306,11 @@ Examples:
         help="Path for the CSV summary file (default: <submissions_dir>/batch_eval_summary.csv)."
     )
     parser.add_argument(
+        "--output_log",
+        default=None,
+        help="Path for the verbose batch log file (default: <submissions_dir>/batch_eval.log)."
+    )
+    parser.add_argument(
         "--onlytask",
         choices=["TaskA", "TaskB"],
         default=None,
@@ -311,58 +338,64 @@ Examples:
         sys.exit(1)
 
     output_summary = Path(args.output_summary) if args.output_summary else submissions_dir / "batch_eval_summary.csv"
+    output_log = Path(args.output_log) if args.output_log else submissions_dir / "batch_eval.log"
+
+    output_summary.parent.mkdir(parents=True, exist_ok=True)
+    output_log.parent.mkdir(parents=True, exist_ok=True)
 
     # Collect team folders (skip hidden entries and files).
     team_folders = sorted(
-        p for p in submissions_dir.iterdir()
-        if p.is_dir() and not p.name.startswith(".")
+        (p for p in submissions_dir.iterdir() if p.is_dir() and not p.name.startswith(".")),
+        key=_natural_key,
     )
 
     if not team_folders:
         print(f"No team folders found in {submissions_dir}")
         sys.exit(0)
 
-    print(f"Found {len(team_folders)} team folder(s) in {submissions_dir}")
-    print(f"Dataset folder : {dataset_folder}")
-    print(f"Summary output : {output_summary}")
-    if args.onlytask:
-        print(f"Only task      : {args.onlytask}")
-    print("=" * 70)
+    with open(output_log, "w", encoding="utf-8") as log_file:
+        with contextlib.redirect_stdout(_Tee(sys.stdout, log_file)), contextlib.redirect_stderr(_Tee(sys.stderr, log_file)):
+            print(f"Found {len(team_folders)} team folder(s) in {submissions_dir}")
+            print(f"Dataset folder : {dataset_folder}")
+            print(f"Summary output : {output_summary}")
+            print(f"Log output     : {output_log}")
+            if args.onlytask:
+                print(f"Only task      : {args.onlytask}")
+            print("=" * 70)
 
-    all_results = []
+            all_results = []
 
-    for team_folder in team_folders:
-        print(f"\nTeam: {team_folder.name}")
-        print("-" * 60)
-        team_results = evaluate_team(team_folder, dataset_folder, only_task=args.onlytask)
-        all_results.extend(team_results)
+            for team_folder in team_folders:
+                print(f"\nTeam: {team_folder.name}")
+                print("-" * 60)
+                team_results = evaluate_team(team_folder, dataset_folder, only_task=args.onlytask)
+                all_results.extend(team_results)
 
-    # Write CSV summary.
-    print("\n" + "=" * 70)
-    print(f"Writing summary to {output_summary} ...")
-    # Build fieldnames: fixed columns first, then all possible metric columns.
-    fixed_fields = ["team", "task", "sub_run", "experiment_folder", "returncode"]
-    metric_fields = _ALL_METRIC_COLS
-    trailing_fields = ["stdout", "stderr"]
-    fieldnames = fixed_fields + metric_fields + trailing_fields
-    with open(output_summary, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in all_results:
-            writer.writerow({k: row.get(k, "") for k in fieldnames})
+            # Write CSV summary.
+            print("\n" + "=" * 70)
+            print(f"Writing summary to {output_summary} ...")
+            # Build fieldnames: fixed columns first, then all possible metric columns.
+            fixed_fields = ["team", "task", "sub_run", "experiment_folder", "returncode"]
+            metric_fields = _ALL_METRIC_COLS
+            fieldnames = fixed_fields + metric_fields
+            with open(output_summary, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                for row in all_results:
+                    writer.writerow({k: row.get(k, "") for k in fieldnames})
 
-    # Print final summary table.
-    passed = sum(1 for r in all_results if r["returncode"] == 0)
-    failed = len(all_results) - passed
-    print(f"\nBatch evaluation complete: {passed} passed, {failed} failed out of {len(all_results)} run(s).")
+            # Print final summary table.
+            passed = sum(1 for r in all_results if r["returncode"] == 0)
+            failed = len(all_results) - passed
+            print(f"\nBatch evaluation complete: {passed} passed, {failed} failed out of {len(all_results)} run(s).")
 
-    if failed:
-        print("\nFailed runs:")
-        for r in all_results:
-            if r["returncode"] != 0:
-                sub = f" / {r['sub_run']}" if r["sub_run"] else ""
-                print(f"  {r['team']} – {r['task']}{sub}  (exit {r['returncode']})")
-        sys.exit(1)
+            if failed:
+                print("\nFailed runs:")
+                for r in all_results:
+                    if r["returncode"] != 0:
+                        sub = f" / {r['sub_run']}" if r["sub_run"] else ""
+                        print(f"  {r['team']} – {r['task']}{sub}  (exit {r['returncode']})")
+                sys.exit(1)
 
 
 if __name__ == "__main__":

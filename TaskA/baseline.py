@@ -53,8 +53,8 @@ import multiprocessing
 STFT_CONFIGS = [(512, 128), (2048, 512), (8192, 2048)]
 
 # PSO parameters
-PARTICLES = 10  # Number of particles
-ITERATIONS = 5  # Number of iterations  
+PARTICLES = 50  # Number of particles
+ITERATIONS = 20  # Number of iterations  
 PSO_W = 0.2      # Inertia weight
 PSO_C1 = 2       # Cognitive coefficient
 PSO_C2 = 1       # Social coefficient
